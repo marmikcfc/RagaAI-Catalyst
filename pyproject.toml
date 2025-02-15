@@ -34,7 +34,7 @@ dependencies = [
     "langchain-core>=0.2.11",
     "langchain>=0.2.11",
     "openai>=1.57.0",
-    "pandas",
+    "pandas>=1.3.0",
     "groq>=0.11.0",
     "PyPDF2>=3.0.1",
     "google-generativeai>=0.8.2",
@@ -50,10 +50,14 @@ dependencies = [
     "GPUtil~=1.4.0",
     "astor>=0.8.1",
     "ipynbname",
+    "pipecat-ai[deepgram,daily,cartesia,silero,openai]",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-cov", "black", "isort", "mypy", "flake8"]
+voice = [
+    "pipecat-ai[deepgram,daily,cartesia,silero,openai]",
+]
 
 [tool.setuptools]
 packages = ["ragaai_catalyst"]
