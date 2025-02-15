@@ -384,3 +384,102 @@ with tracer:
     # Agent execution code
     pass
 
+
+```
+
+### Voice Agent Testing
+
+Test and evaluate voice-based AI agents through automated test scenarios:
+
+```python
+from ragaai_catalyst import VoiceTestRunner, TestCase, UserPersona, Scenario, VoiceAgent
+
+# Initialize voice agent to be tested
+agent = VoiceAgent(
+    agent_id="my-voice-agent",
+    agent_type="webrtc",  # or "phone"
+    connection_details={
+        "endpoint": "wss://your-agent-endpoint",
+        # Add other connection details as needed
+    }
+)
+
+# Create a user persona
+persona = UserPersona(
+    name="Customer Support Caller",
+    prompt="You are a customer calling about a billing issue. You speak clearly but are slightly frustrated."
+)
+
+# Define a test scenario
+scenario = Scenario(
+    name="Billing Inquiry",
+    prompt="""Customer calls to dispute a charge on their recent bill.
+    
+    Expected Flow:
+    1. Introduce yourself and state the problem
+    2. Provide account details when asked
+    3. Express concern about the charge
+    4. Acknowledge resolution steps"""
+)
+
+# Define evaluation metrics
+metrics = [
+    {
+        "name": "Response Accuracy",
+        "prompt": "Evaluate if the agent's responses directly address the customer's billing concern"
+    },
+    {
+        "name": "Empathy Score",
+        "prompt": "Assess the agent's ability to acknowledge and respond to customer frustration"
+    }
+]
+
+# Create a test case
+test_case = TestCase(
+    name="Billing Dispute Resolution",
+    scenario=scenario,
+    user_persona=persona,
+    metrics=metrics
+)
+
+# Initialize test runner
+test_runner = VoiceTestRunner(agent=agent)
+
+# Add test cases
+test_runner.add_test_case(test_case)
+
+# Run tests
+test_runner.run_all_tests()
+
+# Generate and save report
+test_runner.generate_test_report()
+test_runner.save_report("voice_test_report.csv")
+```
+
+The voice agent testing module consists of several key components:
+
+1. **VoiceAgent**: Represents the agent being tested
+   - Supports both WebRTC and phone-based agents
+   - Handles connection management and interaction protocols
+
+2. **TestCase**: Combines all elements needed for a test
+   - Includes scenario, user persona, and evaluation metrics
+   - Defines the expected flow and success criteria
+
+3. **UserPersona**: Defines the characteristics of the test caller
+   - Personality traits and speaking patterns
+   - Consistent behavior across test runs
+
+4. **Scenario**: Outlines the test flow
+   - Step-by-step interaction plan
+   - Expected responses and decision points
+
+5. **VoiceMetrics**: Specialized metrics for voice interaction
+   - Response accuracy and appropriateness
+   - Voice quality and natural language understanding
+   - Conversation flow and timing
+
+For more detailed information on Voice Agent Testing, including advanced scenarios and metric configurations, please refer to the [Voice Agent Testing documentation](docs/voice_testing.md).
+
+</rewritten_file>
+

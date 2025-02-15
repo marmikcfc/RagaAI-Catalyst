@@ -4,6 +4,7 @@ import pandas as pd
 import io
 from .ragaai_catalyst import RagaAICatalyst
 import logging
+from typing import List
 
 logger = logging.getLogger(__name__)
 
@@ -449,3 +450,36 @@ class Evaluation:
             return df[column_list]
         else:
             return pd.DataFrame()
+
+    def evaluate_voice_conversation(self, conversation_data: dict, metrics: List[dict]) -> dict:
+        """
+        Evaluate a voice conversation using specified metrics.
+        
+        Args:
+            conversation_data (dict): The conversation data including audio and transcripts
+            metrics (List[dict]): List of metrics to evaluate
+            
+        Returns:
+            dict: Evaluation results for each metric
+        """
+        results = {}
+        for metric in metrics:
+            results[metric["name"]] = self._evaluate_voice_metric(
+                conversation_data,
+                metric["prompt"]
+            )
+        return results
+    
+    def _evaluate_voice_metric(self, conversation_data: dict, metric_prompt: str) -> float:
+        """
+        Evaluate a single voice metric.
+        
+        Args:
+            conversation_data (dict): The conversation data
+            metric_prompt (str): The prompt describing how to evaluate
+            
+        Returns:
+            float: Score for the metric
+        """
+        # Implementation for voice metric evaluation
+        pass
