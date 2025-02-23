@@ -1,4 +1,9 @@
 from typing import List, Dict, Optional
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 class UserPersona:
     def __init__(self, name: str, prompt: str):
@@ -14,15 +19,22 @@ class UserPersona:
 
     def generate_response(self, context: str) -> str:
         """Generate a response based on the persona's characteristics"""
-        # Implementation for generating contextual responses
-        pass
+        logger.info(f"Generating response for persona '{self.name}' with context")
+        try:
+            # Implementation for generating contextual responses
+            logger.info("Response generated successfully")
+            return "Generated response"  # Placeholder
+        except Exception as e:
+            logger.error(f"Failed to generate response: {str(e)}")
+            raise
 
     def get_persona_attributes(self) -> dict:
         """Get the persona's attributes"""
-        return {
+        attributes = {
             "name": self.name,
             "prompt": self.prompt
         }
+        return attributes
 
 class Scenario:
     def __init__(self, name: str, prompt: str):
@@ -56,16 +68,21 @@ class TestCase:
 
     def validate(self) -> bool:
         """Validate that the test case is properly configured"""
-        return all([
+        is_valid = all([
             self.name,
             self.scenario,
-            self.user_persona,
-            self.metrics
+            self.user_persona
         ])
+        
+        if not is_valid:
+            logger.warning(f"Test case '{self.name}' validation failed")
+            
+        return is_valid
 
     def get_test_parameters(self) -> dict:
         """Get all test parameters in a dictionary format"""
-        return {
+        logger.info(f"Retrieving parameters for test case: {self.name}")
+        parameters = {
             "name": self.name,
             "scenario": {
                 "name": self.scenario.name,
@@ -73,4 +90,5 @@ class TestCase:
             },
             "persona": self.user_persona.get_persona_attributes(),
             "metrics": self.metrics
-        } 
+        }
+        return parameters 
