@@ -73,15 +73,26 @@ class VoiceTestRunner:
             "scenario": test_case.scenario.name,
             "metrics_results": {},
             "transcript": evaluation_data["transcript"],
-         
             "evaluator_results": []
         }
+        
         logger.info(f"Evaluating test case: {test_case.name} with evaluator: {test_case.evaluator}")
-        test_case.evaluator.evaluate_voice_conversation({"transcript": evaluation_data["transcript"]})
         
         # Run voice agent evaluator
         try:
-            results["evaluator_results"]  = await self.evaluator.evaluate_voice_conversation({"transcript": evaluation_data["transcript"]})
+            if hasattr(test_case, 'evaluator') and test_case.evaluator:
+                evaluator_response = await test_case.evaluator.evaluate_voice_conversation({"transcript": evaluation_data["transcript"]})
+                logger.info(f"Received evaluator response: {evaluator_response}")
+                
+                # Store the evaluations in the results
+                if hasattr(evaluator_response, 'evaluations'):
+                    results["evaluator_results"] = evaluator_response.evaluations
+                else:
+                    logger.warning(f"Evaluator response does not have 'evaluations' attribute: {evaluator_response}")
+                    results["evaluator_results"] = []
+            else:
+                logger.info(f"No evaluator configured for test case: {test_case.name}")
+                results["evaluator_results"] = []
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -104,7 +115,11 @@ class VoiceTestRunner:
                 scenario=test_case.scenario.prompt
             )
             
+            #Always reset the transcript handler for each test case
+            self.agent.reset_transcript_handler()
+            
             # Start an outbound call if agent is configured for outbound calls
+            # This is the direction for test agent
             if self.agent.direction == Direction.OUTBOUND:
                 phone_number = self.agent.get_phone_number()
                 if not phone_number:
@@ -133,6 +148,8 @@ class VoiceTestRunner:
                     
                     # Evaluate the test case with the complete data
                     results = await self.evaluate_test_case(test_case, evaluation_data)
+                    # Add recording URL to results
+                    results["recording_url"] = evaluation_data.get("recording_url", "No recording URL available")
                     self.test_evaluations[call_sid] = results
                     # Cleanup
                     del self.call_completion_futures[call_sid]
@@ -145,7 +162,8 @@ class VoiceTestRunner:
                         del self.call_completion_futures[call_sid]
                     raise RuntimeError(error_msg)
             
-            logger.info(f"Test case '{test_case.name}' completed successfully")
+            elif self.agent.direction == Direction.INBOUND:
+                raise NotImplementedError("Inbound is not supported yet")
             
         except Exception as e:
             logger.error(f"Error in test case '{test_case.name}': {str(e)}")
@@ -203,39 +221,68 @@ class VoiceTestRunner:
         return report
 
     def save_report(self, report_path: str):
-        """Save the test report to a CSV file"""
-        logger.debug(f"Saving test report to: {report_path}")
+        """
+        Save the test report to a CSV file in the following format:
+        - Test name
+        - Test description (scenario prompt)
+        - Transcript
+        - Evaluators and their evaluation
+        - Total pass vs fail in evaluator
+        - Recording URL
+        """
+        logger.debug(f"Saving comprehensive test report to: {report_path}")
         try:
-            # Convert results to a pandas DataFrame
+            # Create detailed report rows
             rows = []
-            logger.info(f"Saving report for {self.results} results")
-            for result in self.results:
-                # Add metric results
-                for metric_name, metric_value in result["metrics_results"].items():
-                    rows.append({
-                        "test_case": result["test_case"],
-                        "scenario": result["scenario"],
-                        "type": "metric",
-                        "name": metric_name,
-                        "result": metric_value,
-                        "reason": None
-                    })
-                
-                # Add evaluator results
-                for eval_result in result.get("evaluator_results", []):
-                    rows.append({
-                        "test_case": result["test_case"],
-                        "scenario": result["scenario"],
-                        "type": "evaluator",
-                        "name": eval_result["name"],
-                        "result": eval_result["result"],
-                        "reason": eval_result["reason"]
-                    })
+            logger.info(f"Saving report for {len(self.results)} test results")
             
+            for result in self.results:
+                # Count pass/fail results
+                pass_count = 0
+                fail_count = 0
+                evaluations_text = []
+                
+                for eval_result in result.get("evaluator_results", []):
+                    eval_text = f"{eval_result.name}: {eval_result.result} - {eval_result.reason}"
+                    evaluations_text.append(eval_text)
+                    
+                    if eval_result.result == "pass":
+                        pass_count += 1
+                    elif eval_result.result == "fail":
+                        fail_count += 1
+                
+                # Format transcript for readability
+                transcript_text = "\n".join([f"{msg.role}: {msg.content}" for msg in result["transcript"]])
+                
+                # Get test description from scenario
+                test_description = "No description available"
+                for test_case in self.test_cases:
+                    if test_case.name == result["test_case"]:
+                        test_description = test_case.scenario.prompt
+                        break
+                
+                # Create the row
+                row = {
+                    "test_name": result["test_case"],
+                    "test_description": test_description,
+                    "transcript": transcript_text,
+                    "evaluations": "\n".join(evaluations_text),
+                    "pass_count": pass_count,
+                    "fail_count": fail_count,
+                    "total_evaluations": pass_count + fail_count,
+                    "pass_rate": f"{(pass_count / (pass_count + fail_count) * 100) if (pass_count + fail_count) > 0 else 0:.2f}%",
+                    "recording_url": result.get("recording_url", "No recording URL available")
+                }
+                
+                rows.append(row)
+            
+            # Create DataFrame and save to CSV
             df = pd.DataFrame(rows)
             df.to_csv(report_path, index=False)
+            logger.info(f"Saved comprehensive test report to {report_path}")
+            
         except Exception as e:
-            logger.error(f"Error saving test report: {str(e)}")
+            logger.error(f"Error saving test report: {str(e)}", exc_info=True)
             raise
 
     async def _post_callback_consumer(self):
@@ -251,7 +298,8 @@ class VoiceTestRunner:
                     # Get the transcript for this call from server
                     transcript = self.agent.get_transcript()
                     evaluation_data = {
-                        "transcript": transcript
+                        "transcript": transcript,
+                        "recording_url": callback_data.get('RecordingUrl', 'No recording URL available')
                     }
                     future.set_result(evaluation_data)
                     logger.info(f"Callback processed for call SID: {call_sid}")
