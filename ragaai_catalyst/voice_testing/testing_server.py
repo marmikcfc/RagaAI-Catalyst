@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 import asyncio
 from collections import defaultdict
 
-from ..voice_agent import VoiceAgent
+from ..voice_agent import Direction, VoiceAgent
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 class TestingServer:
     """Server implementation for testing voice agents"""
     
-    def __init__(self, voice_agent: VoiceAgent, callback_queue: asyncio.Queue):
+    def __init__(self, voice_agent: VoiceAgent, callback_queue: asyncio.Queue, call_sid_queue: asyncio.Queue):
         """
         Initialize the testing server
         
@@ -35,6 +35,7 @@ class TestingServer:
         self.ngrok_tunnel = None
         self.base_url = None
         self.callback_queue = callback_queue
+        self.call_sid_queue = call_sid_queue  # Queue for storing call SIDs from twilio_callback
         
         # Load environment variables
         load_dotenv()
@@ -44,9 +45,14 @@ class TestingServer:
             os.getenv('TWILIO_ACCOUNT_SID'),
             os.getenv('TWILIO_AUTH_TOKEN')
         )
+        
         self.twilio_phone_number = os.getenv('TWILIO_PHONE_NUMBER')
                 
         self.transcripts: Dict[str, list] = defaultdict(list)
+
+    def update_twilio_phone_number_webhook_url(self):
+        """Update the Twilio phone number"""
+        self.twilio_client.incoming_phone_numbers.get(sid = os.getenv('TWILIO_PHONE_NUMBER_SID')).update(voice_url=f"{self.base_url}/twilio_connect")
 
     def setup_ngrok(self):
         """Setup and start ngrok tunnel"""
@@ -68,7 +74,7 @@ class TestingServer:
     
 
     async def start_twilio_call(self, phone_number: str, time_limit: int = 60):
-        """Initiate an outbound test call to the specified phone number"""
+        """Initiate an outbound test call to the specified phone number for inbound agent testing"""
         try:
             logger.info(f"Creating call to {phone_number} from {self.twilio_phone_number}")
             call = self.twilio_client.calls.create(
@@ -119,6 +125,33 @@ class TestingServer:
                 logger.error(f"Error in twilio_connect: {str(e)}")
                 raise HTTPException(status_code=500, detail=str(e))
 
+        @router.post('/twilio_callback')
+        async def twilio_callback(request: Request):
+            """Handle initial Twilio callback for outbound calls to capture call SID"""
+            try:
+                form_data = await request.form()
+                data = dict(form_data)
+                logger.info(f"Received twilio callback with data: {data}")
+                call_sid = data.get('CallSid')
+                
+                if call_sid:
+                    logger.info(f"Received outbound call callback with CallSid: {call_sid}")
+                    await self.call_sid_queue.put(call_sid)
+                    
+                    # Instruct Twilio to connect to our WebSocket
+                    response = VoiceResponse()
+                    connect = Connect()
+                    websocket_url = f'{self.base_url.replace("https://", "wss://")}/ws'
+                    connect.stream(url=websocket_url)
+                    response.append(connect)
+                    return PlainTextResponse(str(response), media_type='text/xml')
+                else:
+                    logger.error("No CallSid found in Twilio callback data")
+                    raise HTTPException(status_code=400, detail="No CallSid provided")
+            except Exception as e:
+                logger.error(f"Error in twilio_callback: {str(e)}")
+                raise HTTPException(status_code=500, detail=str(e))
+
         @router.post('/callback')
         async def callback(request: Request):
             """Endpoint to receive call completion callback and queue for processing"""
@@ -158,6 +191,7 @@ class TestingServer:
                 websocket=websocket,
                 stream_sid=stream_sid,
                 call_sid=call_sid,
+                twilio_client=self.twilio_client
             )
             logger.info(f"Done with the call")
         
@@ -194,4 +228,4 @@ class TestingServer:
             
         logger.info(f"Starting server on {host}:{port}")
         
-        uvicorn.run(self.app, host=host, port=port) 
+        uvicorn.run(self.app, host=host, port=port)

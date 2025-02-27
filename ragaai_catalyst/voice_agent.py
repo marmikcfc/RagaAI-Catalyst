@@ -23,6 +23,7 @@ from pipecat.processors.transcript_processor import TranscriptProcessor
 from openai.types.chat import ChatCompletionToolParam
 from dataclasses import dataclass
 from typing import Literal, Optional, Dict
+from openai.types.chat import ChatCompletionToolParam
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -53,7 +54,7 @@ class TranscriptHandler:
         return self.messages
 
 class VoiceAgent:
-    def __init__(self, agent_id: str, agent_type: str, connection_details: dict, direction: Direction = None):
+    def __init__(self, agent_id: str, agent_type: str, connection_details: dict, direction: Direction = None, voice_agent_api_args: dict = None):
         """
         Initialize a voice agent for testing.
         
@@ -75,13 +76,31 @@ class VoiceAgent:
         self.persona = None
         self.scenario = None
         self.transcript_handler = TranscriptHandler()
+        self.twilio_client = None
+        self.call_sid = None
+        self.voice_agent_api_kwargs = voice_agent_api_args
         
         # Validate connection details for phone type agents
-        if self.agent_type == "phone" and direction == Direction.OUTBOUND:
+        if self.agent_type == "phone" and direction == Direction.INBOUND:
             if not connection_details.get('phone_number'):
                 error_msg = "Phone number must be provided in connection_details for outbound phone agents"
                 logger.error(error_msg)
                 raise ValueError(error_msg)
+
+        self.tools = [
+            ChatCompletionToolParam(
+                type="function",
+                function={
+                    "name": "call_end",
+                    "description": "End the current conversation",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "required": []
+                    }
+                }
+            )
+            ]
         
         # Initialize services
         self.llm = OpenAILLMService(api_key=os.getenv("OPENAI_API_KEY"), model="gpt-4o")
@@ -92,15 +111,39 @@ class VoiceAgent:
             push_silence_after_stop=True,
         )
         
+        self.llm.register_function("call_end", self.end_call)
+
         logger.info(f"VoiceAgent initialized with type: {agent_type}, direction: {direction.value if direction else None}")
 
+    def __get_end_call_twiml(self):
+        return """
+        <Response>
+            <Hangup />
+        </Response>
+        """
+    
+    async def end_call(self, function_name, tool_call_id, args, llm, context, result_callback):
+        # Implement the logic to end the call here
+        logger.info(f"Ending call {self.call_sid}")
+        self.twilio_client.calls(self.call_sid).update(twiml=self.__get_end_call_twiml())
+
+    def get_outbound_call_data(self):
+        return self.voice_agent_api_kwargs
+    
+    def reset_transcript_handler(self):
+        self.transcript_handler = TranscriptHandler()
+        
     def set_persona_and_scenario(self, persona: str, scenario: str):
         """Set the agent's persona and scenario"""
         self.persona = persona
         self.scenario = scenario
 
-    async def handle_websocket_connection(self, websocket: WebSocket, stream_sid: str, call_sid: str = None):
+    async def handle_websocket_connection(self, websocket: WebSocket, stream_sid: str, twilio_client: Client = None, call_sid: str = None):
         """Handle WebSocket connection for the agent"""
+
+        self.twilio_client = twilio_client
+        self.call_sid = call_sid
+
         transport = FastAPIWebsocketTransport(
             websocket=websocket,
             params=FastAPIWebsocketParams(
@@ -126,7 +169,8 @@ class VoiceAgent:
         Your responses will be converted to audio, so avoid using special characters."""
 
         messages = [{"role": "system", "content": system_prompt}]
-        context = OpenAILLMContext(messages)
+        context = OpenAILLMContext(messages, tools=self.tools)
+
         context_aggregator = self.llm.create_context_aggregator(context)
 
         audiobuffer = AudioBufferProcessor(user_continuous_stream=False)
@@ -232,8 +276,8 @@ class VoiceAgent:
         Args:
             phone_number (str): The phone number to call
         """
-        if self.direction != Direction.OUTBOUND:
-            error_msg = "Cannot make outbound call with non-outbound agent"
+        if self.direction != Direction.INBOUND:
+            error_msg = "Cannot make outbound call where agent is configured for outbound calls"
             logger.error(error_msg)
             raise ValueError(error_msg)
             
@@ -263,21 +307,6 @@ class VoiceAgent:
             logger.error(f"Failed to get call status: {str(e)}")
             raise
 
-    def end_call(self, call_sid: str):
-        """
-        End a specific call
-        
-        Args:
-            call_sid (str): The call SID to end
-        """
-        logger.info(f"Ending call {call_sid}")
-        try:
-            # Implement call ending logic here
-            logger.debug("Call ended successfully")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to end call: {str(e)}")
-            raise
 
     def get_phone_number(self) -> Optional[str]:
         """Get the phone number configured for this agent"""

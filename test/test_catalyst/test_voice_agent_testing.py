@@ -9,17 +9,45 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
+# Required environment variables for inbound calls:
+# VOICE_AGENT_AUTH_TOKEN - Authentication token for the voice agent provider
+# TESTING_ASSISTANT_ID - ID of the assistant to use for testing
+# VOICE_AGENT_API - API endpoint for the voice agent provider
+# TWILIO_PHONE_NUMBER - Phone number to call
+
 async def main():   
+    # Validate required environment variables
+    # required_vars = [
+    #     "VOICE_AGENT_AUTH_TOKEN",
+    #     "TESTING_ASSISTANT_ID",
+    #     "VOICE_AGENT_API",
+    #     "TWILIO_PHONE_NUMBER"
+    # ]
+    
+    # missing_vars = [var for var in required_vars if not os.getenv(var)]
+    # if missing_vars:
+    #     raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
 
     # Initialize voice agent to be tested
+
+    phone_number = os.getenv("TWILIO_PHONE_NUMBER")
+    phone_number_id = os.getenv("VAPI_PHONE_NUMBER_ID")
+
     agent = VoiceAgent(
         agent_id="dental-office-assistant",
         agent_type="phone",
         connection_details={
-            "endpoint": "wss://your-agent-endpoint",
-            "phone_number": "+17743310229"  # Your Twilio phone number
+            "phone_number": os.getenv("AGENT_PHONE_NUMBER")
         },
-        direction=Direction.OUTBOUND
+        direction=Direction.OUTBOUND,
+
+        voice_agent_api_args = {
+                'assistantId': os.getenv("TESTING_ASSISTANT_ID"),
+                'phoneNumberId': phone_number_id,
+                "customer": {
+                    "number": phone_number
+                }
+            }
     )
 
     # Set the dental assistant as the agent's persona
@@ -113,8 +141,6 @@ async def main():
         user_persona=reschedule_persona,
         evaluator=None
     )
-
-    
 
     # Initialize test runner with both agent and evaluator
     test_runner = VoiceTestRunner(agent=agent)

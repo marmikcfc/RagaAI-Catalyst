@@ -9,6 +9,12 @@ import threading
 import uvicorn
 import time
 import asyncio
+import requests
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -29,10 +35,11 @@ class VoiceTestRunner:
         self.results = []
         self.test_evaluations: Dict[str, dict] = {}
         self.callback_queue = asyncio.Queue()
+        self.call_sid_queue = asyncio.Queue()
         self.server_loop = asyncio.new_event_loop()
         self.call_completion_futures: Dict[str, asyncio.Future] = {}
         
-        self.server = TestingServer(self.agent, self.callback_queue)
+        self.server = TestingServer(self.agent, self.callback_queue, self.call_sid_queue)
         base_url = self.server.setup_ngrok()
         if not base_url:
             error_msg = "Failed to establish ngrok tunnel during initialization. Cannot proceed."
@@ -101,9 +108,54 @@ class VoiceTestRunner:
         
         return results
 
+    async def _initiate_agent_outbound_call(self) -> dict:
+        """
+        Make an outbound call using the voice agent provider's API.
+        
+        Args:
+            phone_number (str): The phone number to call
+            
+        Returns:
+            dict: Response from the voice agent provider's API
+        """
+        # Update the Twilio phone number webhook URL
+        self.server.update_twilio_phone_number_webhook_url()
+                    
+        try:
+            auth_token = os.getenv("VOICE_AGENT_API_AUTH_TOKEN")
+            if not auth_token:
+                raise ValueError("VOICE_AGENT_API_AUTH_TOKEN environment variable not set")
+
+            headers = {
+                'Authorization': f'Bearer {auth_token}',
+                'Content-Type': 'application/json',
+            }
+
+            data = self.agent.get_outbound_call_data()
+
+            api_url = os.getenv("VOICE_AGENT_API")
+            if not api_url:
+                raise ValueError("VOICE_AGENT_API environment variable not set")
+
+            logger.debug(f"Making API request to {api_url}")
+            response = requests.post(f"{api_url}", headers=headers, json=data)
+
+            if response.status_code == 201:
+                logger.info("Outbound call created successfully")
+                return response.json()
+            else:
+                error_msg = f"Failed to create outbound call. Status: {response.status_code}, Response: {response.text}"
+                logger.error(error_msg)
+                raise RuntimeError(error_msg)
+
+        except Exception as e:
+            logger.error(f"Error making outbound call: {str(e)}", exc_info=True)
+            raise
+
     async def run_test_case(self, test_case: TestCase, time_limit: int = 60) -> dict:
         """Run a single test case"""
         self.current_test = test_case
+        self.current_test_time_limit = time_limit
         
         try:
             # Initialize agent connection for this test case
@@ -117,17 +169,16 @@ class VoiceTestRunner:
             
             #Always reset the transcript handler for each test case
             self.agent.reset_transcript_handler()
-            
-            # Start an outbound call if agent is configured for outbound calls
-            # This is the direction for test agent
-            if self.agent.direction == Direction.OUTBOUND:
+
+            # Handle call based on direction
+            if self.agent.direction == Direction.INBOUND:
                 phone_number = self.agent.get_phone_number()
                 if not phone_number:
-                    error_msg = "Agent is configured for outbound calls but no phone number is provided"
+                    error_msg = "Agent is configured for inbound calls but no phone number is provided"
                     logger.error(error_msg)
                     raise RuntimeError(error_msg)
                     
-                logger.info(f"Initiating outbound call to {phone_number}")
+                logger.info(f"Initiating inbound test call to {phone_number}")
                 # Create future before making the call
                 call_result = await self.server.start_twilio_call(phone_number, time_limit=time_limit)
                 call_sid = call_result.get('call_sid')
@@ -135,35 +186,50 @@ class VoiceTestRunner:
                     error_msg = "No call SID returned from Twilio"
                     logger.error(error_msg)
                     raise RuntimeError(error_msg)
+            else:
+                # For outbound calls:
+                # 1. Initiate the outbound call through the agent's API
+                # 2. Wait to receive the call SID through the twilio_callback endpoint
+                logger.info("Initiating outbound test call through agent API")
+                await self._initiate_agent_outbound_call()
                 
-                # Create future for this call
-                self.call_completion_futures[call_sid] = asyncio.Future()
-                logger.info(f"Call initiated successfully with SID: {call_sid}")
+                # Wait for the call SID to be received via the twilio_callback endpoint
+                logger.info("Waiting for call SID from Twilio callback")
+                call_sid = await self.call_sid_queue.get()
                 
-                # Wait for call completion and evaluation data
-                try:
-                    future = self.call_completion_futures[call_sid]
-                    evaluation_data = await asyncio.wait_for(future, timeout=60)
-                    logger.info(f"Received transcript for call {call_sid}")
-                    
-                    # Evaluate the test case with the complete data
-                    results = await self.evaluate_test_case(test_case, evaluation_data)
-                    # Add recording URL to results
-                    results["recording_url"] = evaluation_data.get("recording_url", "No recording URL available")
-                    self.test_evaluations[call_sid] = results
-                    # Cleanup
-                    del self.call_completion_futures[call_sid]
-                    return results
-                    
-                except asyncio.TimeoutError:
-                    error_msg = "Timeout waiting for call completion and evaluation"
+                if not call_sid:
+                    error_msg = "No call SID received from Twilio callback within timeout period"
                     logger.error(error_msg)
-                    if call_sid in self.call_completion_futures:
-                        del self.call_completion_futures[call_sid]
                     raise RuntimeError(error_msg)
+                
+                logger.info(f"Received call SID for outbound call: {call_sid}")
+
+            # Create future for this call
+            self.call_completion_futures[call_sid] = asyncio.Future()
             
-            elif self.agent.direction == Direction.INBOUND:
-                raise NotImplementedError("Inbound is not supported yet")
+            # Wait for call completion and evaluation data
+            try:
+                future = self.call_completion_futures[call_sid]
+
+                evaluation_data = await asyncio.wait_for(future, timeout= 300)
+                logger.info(f"Received transcript for call {call_sid}")
+                
+                # Evaluate the test case with the complete data
+                results = await self.evaluate_test_case(test_case, evaluation_data)
+                # Add recording URL to results
+                results["recording_url"] = evaluation_data.get("recording_url", "No recording URL available")
+                self.test_evaluations[call_sid] = results
+                # Cleanup
+                del self.call_completion_futures[call_sid]
+                return results
+                
+            except asyncio.TimeoutError:
+                error_msg = "Timeout waiting for call completion and evaluation"
+                logger.error(error_msg)
+                if call_sid in self.call_completion_futures:
+                    del self.call_completion_futures[call_sid]
+                raise RuntimeError(error_msg)
+                        
             
         except Exception as e:
             logger.error(f"Error in test case '{test_case.name}': {str(e)}")
