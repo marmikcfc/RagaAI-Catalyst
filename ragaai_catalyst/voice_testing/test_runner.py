@@ -4,6 +4,7 @@ import pandas as pd
 from ..voice_agent import Direction, VoiceAgent
 from .test_components import TestCase
 from .testing_server import TestingServer
+from ..voice_agent_evaluation import VoiceAgentEvaluator
 import threading
 import uvicorn
 import time
@@ -20,6 +21,7 @@ class VoiceTestRunner:
         
         Args:
             agent (VoiceAgent): The voice agent to test
+            evaluator (VoiceAgentEvaluator): The evaluator to assess conversation quality
         """
         self.agent = agent
         self.test_cases: List[TestCase] = []
@@ -70,13 +72,21 @@ class VoiceTestRunner:
             "test_case": test_case.name,
             "scenario": test_case.scenario.name,
             "metrics_results": {},
-            "transcript": evaluation_data["transcript"]
+            "transcript": evaluation_data["transcript"],
+         
+            "evaluator_results": []
         }
+        logger.info(f"Evaluating test case: {test_case.name} with evaluator: {test_case.evaluator}")
+        test_case.evaluator.evaluate_voice_conversation({"transcript": evaluation_data["transcript"]})
         
-        # Run metrics evaluation with the complete transcript
-        for metric in test_case.metrics:
-            logger.debug(f"Evaluating metric: {metric['name']}")
-            results["metrics_results"][metric["name"]] = await self._evaluate_metric(metric, evaluation_data["transcript"])
+        # Run voice agent evaluator
+        try:
+            results["evaluator_results"]  = await self.evaluator.evaluate_voice_conversation({"transcript": evaluation_data["transcript"]})
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            logger.error(f"Error during voice agent evaluation: {str(e)}")
+            results["evaluator_results"] = []
         
         return results
 
@@ -156,7 +166,7 @@ class VoiceTestRunner:
         server = uvicorn.Server(config)
         self.server_loop.run_until_complete(server.serve())
 
-    async def run_all_tests(self):
+    async def run_all_tests(self, time_limit: int = 20):
         """Run all test cases"""
         logger.info(f"Starting execution of {len(self.test_cases)} test cases")
         
@@ -164,7 +174,7 @@ class VoiceTestRunner:
             # Run tests
             for test_case in self.test_cases:
                 logger.info(f"Running test case: {test_case.name}")
-                result = await self.run_test_case(test_case, time_limit=20)
+                result = await self.run_test_case(test_case, time_limit=time_limit)
                 self.results.append(result)
         finally:
             pass
@@ -198,13 +208,28 @@ class VoiceTestRunner:
         try:
             # Convert results to a pandas DataFrame
             rows = []
+            logger.info(f"Saving report for {self.results} results")
             for result in self.results:
+                # Add metric results
                 for metric_name, metric_value in result["metrics_results"].items():
                     rows.append({
                         "test_case": result["test_case"],
                         "scenario": result["scenario"],
-                        "metric": metric_name,
-                        "score": metric_value
+                        "type": "metric",
+                        "name": metric_name,
+                        "result": metric_value,
+                        "reason": None
+                    })
+                
+                # Add evaluator results
+                for eval_result in result.get("evaluator_results", []):
+                    rows.append({
+                        "test_case": result["test_case"],
+                        "scenario": result["scenario"],
+                        "type": "evaluator",
+                        "name": eval_result["name"],
+                        "result": eval_result["result"],
+                        "reason": eval_result["reason"]
                     })
             
             df = pd.DataFrame(rows)

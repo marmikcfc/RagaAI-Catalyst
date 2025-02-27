@@ -1,6 +1,8 @@
 from typing import List, Dict, Optional
 import logging
 
+from ragaai_catalyst.voice_agent_evaluation import VoiceAgentEvaluator
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -50,7 +52,7 @@ class Scenario:
 
 class TestCase:
     def __init__(self, name: str, scenario: Scenario, 
-                 user_persona: UserPersona, metrics: List[Dict[str, str]]):
+                 user_persona: UserPersona, evaluator: VoiceAgentEvaluator):
         """
         Initialize a test case.
         
@@ -63,7 +65,7 @@ class TestCase:
         self.name = name
         self.scenario = scenario
         self.user_persona = user_persona
-        self.metrics = metrics
+        self.evaluator = evaluator
         self.results = None
 
     def validate(self) -> bool:
@@ -89,6 +91,6 @@ class TestCase:
                 "prompt": self.scenario.prompt
             },
             "persona": self.user_persona.get_persona_attributes(),
-            "metrics": self.metrics
+            "evaluator": self.evaluator
         }
         return parameters 
