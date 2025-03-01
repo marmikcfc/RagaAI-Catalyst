@@ -120,7 +120,7 @@ class VoiceTestRunner:
         """
         # Update the Twilio phone number webhook URL
         self.server.update_twilio_phone_number_webhook_url()
-                    
+        logger.info("Twilio phone number webhook URL updated")
         try:
             auth_token = os.getenv("VOICE_AGENT_API_AUTH_TOKEN")
             if not auth_token:
@@ -137,7 +137,7 @@ class VoiceTestRunner:
             if not api_url:
                 raise ValueError("VOICE_AGENT_API environment variable not set")
 
-            logger.debug(f"Making API request to {api_url}")
+            logger.info(f"Making API request to {api_url}")
             response = requests.post(f"{api_url}", headers=headers, json=data)
 
             if response.status_code == 201:
@@ -181,7 +181,7 @@ class VoiceTestRunner:
                 logger.info(f"Initiating inbound test call to {phone_number}")
                 # Create future before making the call
                 call_result = await self.server.start_twilio_call(phone_number, time_limit=time_limit)
-                call_sid = call_result.get('call_sid')
+                call_sid = call_result.get('call_sid', )
                 if not call_sid:
                     error_msg = "No call SID returned from Twilio"
                     logger.error(error_msg)
@@ -195,7 +195,7 @@ class VoiceTestRunner:
                 
                 # Wait for the call SID to be received via the twilio_callback endpoint
                 logger.info("Waiting for call SID from Twilio callback")
-                call_sid = await self.call_sid_queue.get()
+                call_sid = await asyncio.wait_for(self.call_sid_queue.get(), timeout=60)
                 
                 if not call_sid:
                     error_msg = "No call SID received from Twilio callback within timeout period"
@@ -209,9 +209,13 @@ class VoiceTestRunner:
             
             # Wait for call completion and evaluation data
             try:
-                future = self.call_completion_futures[call_sid]
 
-                evaluation_data = await asyncio.wait_for(future, timeout= 300)
+                #Keep on polling the future until it is done
+                while not self.call_completion_futures[call_sid].done():
+                    await asyncio.sleep(1)
+                evaluation_data = self.call_completion_futures[call_sid].result()
+
+                #evaluation_data = await asyncio.wait_for(self.call_completion_futures[call_sid], timeout= 150)
                 logger.info(f"Received transcript for call {call_sid}")
                 
                 # Evaluate the test case with the complete data
@@ -354,21 +358,21 @@ class VoiceTestRunner:
     async def _post_callback_consumer(self):
         """Continuously process callback data from the callback queue and set the results for associated call SID."""
         while True:
-            logger.info("Waiting for callback data from the callback queue")
+            logger.debug("Waiting for callback data from the callback queue")
             callback_data = await self.callback_queue.get()
-            logger.info(f"Received enqueued data: {callback_data}")
+            logger.debug(f"Received enqueued data: {callback_data}")
             call_sid = callback_data.get('CallSid')  # Twilio uses CallSid
             if call_sid in self.call_completion_futures:
-                future = self.call_completion_futures[call_sid]
-                if not future.done():
+                if not self.call_completion_futures[call_sid].done():
                     # Get the transcript for this call from server
                     transcript = self.agent.get_transcript()
                     evaluation_data = {
                         "transcript": transcript,
                         "recording_url": callback_data.get('RecordingUrl', 'No recording URL available')
                     }
-                    future.set_result(evaluation_data)
-                    logger.info(f"Callback processed for call SID: {call_sid}")
+                    self.call_completion_futures[call_sid].set_result(evaluation_data)
+                    await asyncio.sleep(0.1)  # Just a short sleep to let event loop process
+                    
                 else:
                     logger.warning(f"Future already completed for call SID: {call_sid}")
             else:

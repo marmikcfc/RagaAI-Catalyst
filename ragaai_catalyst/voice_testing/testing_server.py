@@ -9,6 +9,7 @@ from typing import Optional, Dict
 import logging
 import os
 from pyngrok import ngrok, conf
+
 from twilio.rest import Client
 from dotenv import load_dotenv
 import asyncio
@@ -52,7 +53,11 @@ class TestingServer:
 
     def update_twilio_phone_number_webhook_url(self):
         """Update the Twilio phone number"""
-        self.twilio_client.incoming_phone_numbers.get(sid = os.getenv('TWILIO_PHONE_NUMBER_SID')).update(voice_url=f"{self.base_url}/twilio_connect")
+        try:
+            logger.info(f"Updating Twilio phone number webhook URL to {self.base_url}/twilio_connect")
+            self.twilio_client.incoming_phone_numbers.get(sid = os.getenv('TWILIO_PHONE_NUMBER_SID')).update(voice_url=f"{self.base_url}/twilio_connect")
+        except Exception as e:
+            logger.error(f"Error updating Twilio phone number webhook URL: {e}")
 
     def setup_ngrok(self):
         """Setup and start ngrok tunnel"""
@@ -76,7 +81,7 @@ class TestingServer:
     async def start_twilio_call(self, phone_number: str, time_limit: int = 60):
         """Initiate an outbound test call to the specified phone number for inbound agent testing"""
         try:
-            logger.info(f"Creating call to {phone_number} from {self.twilio_phone_number}")
+            logger.info(f"Creating call to {phone_number} from {self.twilio_phone_number} with time limit {time_limit}")
             call = self.twilio_client.calls.create(
                 to=phone_number,
                 from_=self.twilio_phone_number,
@@ -111,33 +116,18 @@ class TestingServer:
         
         
         @router.post('/twilio_connect')
-        async def twilio_connect():
+        async def twilio_connect(request: Request):
             """Handle Twilio webhook for establishing test WebSocket connection"""
-            try:
-                response = VoiceResponse()
-                connect = Connect()
-                websocket_url = f'{self.base_url.replace("https://", "wss://")}/ws'
-                connect.stream(url=websocket_url)
-                logger.info(f"WebSocket connection setup: {websocket_url}")
-                response.append(connect)
-                return PlainTextResponse(str(response), media_type='text/xml')
-            except Exception as e:
-                logger.error(f"Error in twilio_connect: {str(e)}")
-                raise HTTPException(status_code=500, detail=str(e))
-
-        @router.post('/twilio_callback')
-        async def twilio_callback(request: Request):
-            """Handle initial Twilio callback for outbound calls to capture call SID"""
             try:
                 form_data = await request.form()
                 data = dict(form_data)
-                logger.info(f"Received twilio callback with data: {data}")
                 call_sid = data.get('CallSid')
-                
+
                 if call_sid:
-                    logger.info(f"Received outbound call callback with CallSid: {call_sid}")
+                            
                     await self.call_sid_queue.put(call_sid)
-                    
+                    await asyncio.sleep(0.1)
+                    logger.info(f"Received outbound call callback with CallSid: {call_sid}")
                     # Instruct Twilio to connect to our WebSocket
                     response = VoiceResponse()
                     connect = Connect()
@@ -149,7 +139,7 @@ class TestingServer:
                     logger.error("No CallSid found in Twilio callback data")
                     raise HTTPException(status_code=400, detail="No CallSid provided")
             except Exception as e:
-                logger.error(f"Error in twilio_callback: {str(e)}")
+                logger.error(f"Error in twilio_connect: {str(e)}")
                 raise HTTPException(status_code=500, detail=str(e))
 
         @router.post('/callback')
