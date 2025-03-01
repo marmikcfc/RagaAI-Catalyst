@@ -5,32 +5,17 @@ from openai import AsyncOpenAI
 import asyncio
 import os
 from dotenv import load_dotenv
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
 
-# Required environment variables for inbound calls:
-# VOICE_AGENT_AUTH_TOKEN - Authentication token for the voice agent provider
-# TESTING_ASSISTANT_ID - ID of the assistant to use for testing
-# VOICE_AGENT_API - API endpoint for the voice agent provider
-# TWILIO_PHONE_NUMBER - Phone number to call
-
 async def main():   
-    # Validate required environment variables
-    # required_vars = [
-    #     "VOICE_AGENT_AUTH_TOKEN",
-    #     "TESTING_ASSISTANT_ID",
-    #     "VOICE_AGENT_API",
-    #     "TWILIO_PHONE_NUMBER"
-    # ]
     
-    # missing_vars = [var for var in required_vars if not os.getenv(var)]
-    # if missing_vars:
-    #     raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
-
-    # Initialize voice agent to be tested
-
     phone_number = os.getenv("TWILIO_PHONE_NUMBER")
+    logger.info(f"Phone number: {phone_number}")
     phone_number_id = os.getenv("VAPI_PHONE_NUMBER_ID")
 
     agent = VoiceAgent(
@@ -39,7 +24,7 @@ async def main():
         connection_details={
             "phone_number": os.getenv("AGENT_PHONE_NUMBER")
         },
-        direction=Direction.OUTBOUND,
+        direction=Direction.INBOUND,
 
         voice_agent_api_args = {
                 'assistantId': os.getenv("TESTING_ASSISTANT_ID"),
