@@ -17,6 +17,7 @@ RagaAI Catalyst is a comprehensive platform designed to enhance the management a
     - [Synthetic Data Generation](#synthetic-data-generation)
     - [Guardrail Management](#guardrail-management)
     - [Agentic Tracing](#agentic-tracing)
+    - [Voice Agent Testing](#voice-agent-testing)
 
 ## Installation
 
@@ -389,97 +390,120 @@ with tracer:
 
 ### Voice Agent Testing
 
-Test and evaluate voice-based AI agents through automated test scenarios:
+RagaAI Catalyst provides a comprehensive framework for testing and evaluating voice-based AI agents through automated test scenarios. This allows you to validate the performance, accuracy, and user experience of your voice agents before deploying them to production.
+
+#### Environment Variables Setup
+
+Before using the Voice Agent Testing functionality, you need to set up the following environment variables:
+
+```bash
+# Twilio Configuration
+TWILIO_PHONE_NUMBER="+1234567890"      # Your Twilio phone number for testing
+VAPI_PHONE_NUMBER_ID="your-phone-id"   # Phone number ID from Voice API provider
+AGENT_PHONE_NUMBER="+1234567890"       # Phone number for the agent to use
+
+# Assistant Configuration
+TESTING_ASSISTANT_ID="your-assistant-id"  # ID of the assistant to test
+
+# API Keys for Services
+OPENAI_API_KEY="your-openai-api-key"      # Required for LLM and evaluation
+DEEPGRAM_API_KEY="your-deepgram-api-key"  # Required for speech-to-text
+CARTESIA_API_KEY="your-cartesia-api-key"  # Required for text-to-speech
+
+# Optional: For advanced phone testing
+TWILIO_ACCOUNT_SID="your-twilio-account-sid"
+TWILIO_AUTH_TOKEN="your-twilio-auth-token"
+TWILIO_PHONE_NUMBER_SID="your-phone-number-sid"
+VOICE_AGENT_API="your-voice-agent-api-url"
+VOICE_AGENT_API_AUTH_TOKEN="your-voice-agent-api-auth-token"
+NGROK_AUTH_TOKEN="your-ngrok-auth-token"  # If using ngrok for tunneling
+```
+
+#### Basic Usage
 
 ```python
 from ragaai_catalyst import VoiceTestRunner, TestCase, UserPersona, Scenario, VoiceAgent
+from ragaai_catalyst.voice_agent import Direction
+from ragaai_catalyst.voice_agent_evaluation import VoiceAgentEvaluator, VoiceAgentMetric
+import asyncio
+import os
+from dotenv import load_dotenv
 
-# Initialize voice agent to be tested
-agent = VoiceAgent(
-    agent_id="my-voice-agent",
-    agent_type="webrtc",  # or "phone"
-    connection_details={
-        "endpoint": "wss://your-agent-endpoint",
-        # Add other connection details as needed
-    }
-)
+# Load environment variables
+load_dotenv()
 
-# Create a user persona
-persona = UserPersona(
-    name="Customer Support Caller",
-    prompt="You are a customer calling about a billing issue. You speak clearly but are slightly frustrated."
-)
+async def main():
+    # Initialize the voice agent to be tested
+    agent = VoiceAgent(
+        agent_id="customer-support-agent",
+        agent_type="phone",  # or "webrtc"
+        connection_details={
+            "phone_number": os.getenv("AGENT_PHONE_NUMBER")
+        },
+        direction=Direction.INBOUND,  # or Direction.OUTBOUND
+        voice_agent_api_args={
+            'assistantId': os.getenv("TESTING_ASSISTANT_ID"),
+            'phoneNumberId': os.getenv("VAPI_PHONE_NUMBER_ID"),
+            "customer": {
+                "number": os.getenv("TWILIO_PHONE_NUMBER")
+            }
+        }
+    )
 
-# Define a test scenario
-scenario = Scenario(
-    name="Billing Inquiry",
-    prompt="""Customer calls to dispute a charge on their recent bill.
-    
-    Expected Flow:
-    1. Introduce yourself and state the problem
-    2. Provide account details when asked
-    3. Express concern about the charge
-    4. Acknowledge resolution steps"""
-)
+    # Set the agent's persona and scenario
+    agent.set_persona_and_scenario(
+        persona="""You are a customer support agent for Acme Inc...""",
+        scenario="You are ready to assist callers with their inquiries."
+    )
 
-# Define evaluation metrics
-metrics = [
-    {
-        "name": "Response Accuracy",
-        "prompt": "Evaluate if the agent's responses directly address the customer's billing concern"
-    },
-    {
-        "name": "Empathy Score",
-        "prompt": "Assess the agent's ability to acknowledge and respond to customer frustration"
-    }
-]
+    # Create a user persona for testing
+    test_persona = UserPersona(
+        name="John Doe",
+        prompt="""You are John, a customer with a billing question..."""
+    )
 
-# Create a test case
-test_case = TestCase(
-    name="Billing Dispute Resolution",
-    scenario=scenario,
-    user_persona=persona,
-    metrics=metrics
-)
+    # Define a test scenario
+    test_scenario = Scenario(
+        name="Billing Inquiry",
+        prompt="""You're calling about a charge on your recent bill..."""
+    )
 
-# Initialize test runner
-test_runner = VoiceTestRunner(agent=agent)
+    # Create an evaluator with custom metrics
+    evaluator = VoiceAgentEvaluator(model="gpt-4o-mini")
+    evaluator.add_metric(VoiceAgentMetric(
+        name="Response Accuracy",
+        prompt="Evaluate if the agent's responses directly address the customer's concern"
+    ))
+    evaluator.add_metric(VoiceAgentMetric(
+        name="Empathy Score",
+        prompt="Assess the agent's ability to acknowledge and respond to customer emotions"
+    ))
 
-# Add test cases
-test_runner.add_test_case(test_case)
+    # Create a test case
+    test_case = TestCase(
+        name="Billing Inquiry Resolution",
+        scenario=test_scenario,
+        user_persona=test_persona,
+        evaluator=evaluator
+    )
 
-# Run tests
-test_runner.run_all_tests()
+    # Initialize test runner
+    test_runner = VoiceTestRunner(agent=agent)
 
-# Generate and save report
-test_runner.generate_test_report()
-test_runner.save_report("voice_test_report.csv")
+    # Add test cases
+    test_runner.add_test_case(test_case)
+
+    # Run tests with a time limit (in seconds)
+    await test_runner.run_all_tests(time_limit=60)
+
+    # Save test results to CSV
+    test_runner.save_report("voice_test_results.csv")
+
+    # Print conversation transcripts
+    print("\nConversation Transcripts:")
+    for message in agent.get_transcript():
+        print(f"{message.role}: {message.content}")
+
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
-
-The voice agent testing module consists of several key components:
-
-1. **VoiceAgent**: Represents the agent being tested
-   - Supports both WebRTC and phone-based agents
-   - Handles connection management and interaction protocols
-
-2. **TestCase**: Combines all elements needed for a test
-   - Includes scenario, user persona, and evaluation metrics
-   - Defines the expected flow and success criteria
-
-3. **UserPersona**: Defines the characteristics of the test caller
-   - Personality traits and speaking patterns
-   - Consistent behavior across test runs
-
-4. **Scenario**: Outlines the test flow
-   - Step-by-step interaction plan
-   - Expected responses and decision points
-
-5. **VoiceMetrics**: Specialized metrics for voice interaction
-   - Response accuracy and appropriateness
-   - Voice quality and natural language understanding
-   - Conversation flow and timing
-
-For more detailed information on Voice Agent Testing, including advanced scenarios and metric configurations, please refer to the [Voice Agent Testing documentation](docs/voice_testing.md).
-
-</rewritten_file>
-

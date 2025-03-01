@@ -50,14 +50,11 @@ dependencies = [
     "GPUtil~=1.4.0",
     "astor>=0.8.1",
     "ipynbname",
-    "pipecat-ai[deepgram,daily,cartesia,silero,openai]",
+    "pipecat-ai[cartesia,openai,silero,deepgram]==0.0.57",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-cov", "black", "isort", "mypy", "flake8"]
-voice = [
-    "pipecat-ai[deepgram,daily,cartesia,silero,openai]",
-]
 
 [tool.setuptools]
 packages = ["ragaai_catalyst"]
